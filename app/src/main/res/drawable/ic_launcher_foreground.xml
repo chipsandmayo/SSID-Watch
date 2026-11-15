@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Wi-Fi arcs above a small bar chart -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF4FC3F7"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:pathData="M31,47 A32,32 0 0 1 77,47" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF4FC3F7"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:pathData="M40,55 A20,20 0 0 1 68,55" />
+    <path
+        android:fillColor="#FF4FC3F7"
+        android:pathData="M54,60 m-5,0 a5,5 0 1 0 10,0 a5,5 0 1 0 -10,0" />
+    <path android:fillColor="#FFFFB74D" android:pathData="M38,80 h6 v-8 h-6 z" />
+    <path android:fillColor="#FF4FC3F7" android:pathData="M47,80 h6 v-12 h-6 z" />
+    <path android:fillColor="#FFFFB74D" android:pathData="M56,80 h6 v-6 h-6 z" />
+    <path android:fillColor="#FF4FC3F7" android:pathData="M65,80 h6 v-10 h-6 z" />
+</vector>
