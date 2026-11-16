@@ -1,6 +1,6 @@
 # SSID Watch
 
-A GlassWire-style Wi-Fi data monitor for Android that also records **which Wi-Fi network (SSID)** the data was used on.
+A Wi-Fi data monitor for Android that records how much data each app uses and **which Wi-Fi network (SSID)** it was used on.
 
 ## Download
 
@@ -36,11 +36,15 @@ Android records how much Wi-Fi data each app used, but not which Wi-Fi network i
 
 The growth between two snapshots goes to the network that was connected in between. Counters are read cumulatively from a fixed anchor on Android's bucket boundaries, so usage isn't spread across networks by Android's 2-hour buckets.
 
-**History before install:** like GlassWire, the app imports Android's own per-app Wi-Fi history (as far back as the phone keeps it, usually about 3 months), so any past day shows totals, an hourly chart and per-app usage. Android never recorded the Wi-Fi name for that data, so it appears as *Network not recorded*. Network names are known from installation onwards. Tracking runs all the time once permissions are granted.
+**History before install:** the app imports Android's own per-app Wi-Fi history (as far back as the phone keeps it, usually about 3 months), so any past day shows totals, an hourly chart and per-app usage. Android never recorded the Wi-Fi name for that data, so it appears as *Network not recorded*. Network names are known from installation onwards. Tracking runs all the time once permissions are granted.
 
 ## Building it yourself
 
 - CI: `.github/workflows/build.yml` (JDK 17, Gradle 8.10.2, AGP 8.7, Kotlin 2.0, Jetpack Compose).
 - Locally: open the folder in Android Studio and run, or use `gradle assembleRelease`.
 
-The signing key `app/ssidwatch.jks` is committed so that every CI build can update the installed app in place. It's fine for personal use. If you distribute the app, replace it with your own key and store it in GitHub secrets.
+Release builds are signed in CI with a private key held in GitHub secrets (`SIGNING_KEYSTORE_B64`, `SIGNING_PASSWORD`). The older key in `app/ssidwatch.jks` is public and kept only so installed copies can move to the private key using Android's APK key rotation (Android 9+). After a phone installs a rotated build, APKs signed only with the old key can no longer replace it. If the secrets are missing, CI falls back to the old key and warns.
+
+## Privacy
+
+All usage history, Wi-Fi names, live-graph recordings and captured packets stay on the phone. The app only contacts ipinfo.io (provider and approximate location on the Connection tab), api.macvendors.com (router maker, from the first half of its hardware address) and GitHub (updates). The first two can be switched off in Settings. Location permission is used only because Android requires it to read the Wi-Fi name.

@@ -24,6 +24,8 @@ jobs:
           gradle-version: "8.10.2"
 
       - name: Build release APK
+        env:
+          SIGNING_KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_B64 }}
         run: |
           set -o pipefail
           gradle assembleRelease --no-daemon 2>&1 | tee build.log
@@ -36,8 +38,32 @@ jobs:
           { echo "Build failed:"; echo '```'; grep -E "^e: |error:|FAILURE|What went wrong" -A3 build.log | head -80; echo '```'; } > report.md
           gh api repos/${{ github.repository }}/commits/${{ github.sha }}/comments -F body=@report.md
 
-      - name: Rename APK
-        run: cp app/build/outputs/apk/release/app-release.apk SSIDWatch.apk
+      - name: Sign APK
+        env:
+          SIGNING_KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_B64 }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+        run: |
+          set -e
+          if [ -z "$SIGNING_KEYSTORE_B64" ]; then
+            echo "::warning::Signing secrets not set; signing with the old public key."
+            cp app/build/outputs/apk/release/app-release.apk SSIDWatch.apk
+            exit 0
+          fi
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          echo "Using build-tools $BT"
+          echo "$SIGNING_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/new.jks"
+          "$BT/zipalign" -p -f 4 app/build/outputs/apk/release/app-release-unsigned.apk "$RUNNER_TEMP/aligned.apk"
+          # Proof that the old key hands over to the new one, so installed copies update in place
+          "$BT/apksigner" rotate --out "$RUNNER_TEMP/lineage" \
+            --old-signer --ks app/ssidwatch.jks --ks-pass pass:ssidwatch --ks-key-alias ssidwatch \
+            --new-signer --ks "$RUNNER_TEMP/new.jks" --ks-pass env:SIGNING_PASSWORD --ks-key-alias ssidwatch
+          "$BT/apksigner" sign \
+            --ks app/ssidwatch.jks --ks-pass pass:ssidwatch --ks-key-alias ssidwatch \
+            --next-signer --ks "$RUNNER_TEMP/new.jks" --ks-pass env:SIGNING_PASSWORD --ks-key-alias ssidwatch \
+            --lineage "$RUNNER_TEMP/lineage" --rotation-min-sdk-version 28 \
+            --out SSIDWatch.apk "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" verify --verbose --print-certs SSIDWatch.apk | grep -E "Verified|Signer|SHA-256" | head -20
+          rm -f "$RUNNER_TEMP/new.jks" "$RUNNER_TEMP/lineage"
 
       - uses: actions/upload-artifact@v4
         with:

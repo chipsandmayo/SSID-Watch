@@ -2,7 +2,7 @@ package com.ssidwatch.capture
 
 import java.net.InetAddress
 
-/** Turns packets into Wireshark-style "Protocol" and "Info" columns. */
+/** Turns packets into short "Protocol" and "Info" descriptions for the Capture list. */
 object Dissect {
 
     fun address(ip: ByteArray, port: Int, withPort: Boolean): String {

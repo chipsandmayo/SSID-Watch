@@ -47,6 +47,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.ssidwatch.data.Tracker
 import com.ssidwatch.ui.AppTheme
+import com.ssidwatch.ui.Lookups
 import com.ssidwatch.ui.ThemePrefs
 import com.ssidwatch.ui.isAppDark
 import com.ssidwatch.ui.CaptureScreen
@@ -65,6 +66,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ThemePrefs.load(this)
+        Lookups.load(this)
         enableEdgeToEdge()
         setContent {
             val dark = isAppDark()

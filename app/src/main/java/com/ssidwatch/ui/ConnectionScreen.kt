@@ -92,13 +92,15 @@ fun ConnectionScreen(padding: PaddingValues) {
         }
     }
     val bssid = details?.bssid
-    LaunchedEffect(bssid) {
+    val lookups = Lookups.enabled
+    LaunchedEffect(bssid, lookups) {
         vendor = null
-        if (bssid != null) vendor = withContext(Dispatchers.IO) { ConnectionInfo.vendor(bssid) }
+        if (bssid != null && lookups) vendor = withContext(Dispatchers.IO) { ConnectionInfo.vendor(bssid) }
     }
     val ssidKey = details?.ssid
-    LaunchedEffect(ssidKey) {
-        if (ssidKey == null) return@LaunchedEffect
+    LaunchedEffect(ssidKey, lookups) {
+        isp = null
+        if (ssidKey == null || !lookups) return@LaunchedEffect
         ispLoaded = false
         isp = withContext(Dispatchers.IO) { ConnectionInfo.fetchIsp() }
         ispLoaded = true
@@ -125,7 +127,10 @@ fun ConnectionScreen(padding: PaddingValues) {
                     InfoRow("SSID", d.ssid)
                     InfoRow("Hidden SSID", if (d.hidden) "Yes" else "No")
                     InfoRow("BSSID", d.bssid)
-                    InfoRow("Manufacturer", vendor ?: if (d.bssid != null) "Looking up…" else null)
+                    InfoRow(
+                        "Manufacturer",
+                        vendor ?: if (!lookups) "Lookups off in Settings" else if (d.bssid != null) "Looking up…" else null
+                    )
                     InfoRow("Standard", d.standard)
                     InfoRow("Channel", d.channel?.toString())
                     InfoRow("Frequency", d.frequency?.let { "$it MHz" })
@@ -148,7 +153,14 @@ fun ConnectionScreen(padding: PaddingValues) {
             InfoCard("Internet service provider") {
                 val i = isp
                 if (i == null) {
-                    InfoRow("Status", if (ispLoaded) "Couldn't reach ipinfo.io" else "Looking up…")
+                    InfoRow(
+                        "Status",
+                        when {
+                            !lookups -> "Online lookups are off in Settings"
+                            ispLoaded -> "Couldn't reach ipinfo.io"
+                            else -> "Looking up…"
+                        }
+                    )
                 } else {
                     InfoRow("Network name", i.name)
                     InfoRow("ASN", i.asn)

@@ -18,8 +18,8 @@ android {
         versionName = "1.0.$buildNumber"
     }
 
-    // Personal-use signing key kept in the repo so every CI build can update the
-    // installed app in place. Swap for your own key + GitHub secrets if you publish widely.
+    // Old, public signing key. Only used for local builds, as the fallback in CI, and as
+    // the "previous signer" in the key-rotation proof. See README.
     signingConfigs {
         create("release") {
             storeFile = file("ssidwatch.jks")
@@ -32,7 +32,13 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("release")
+            // In CI with signing secrets, the APK is left unsigned here and signed afterwards
+            // with the private key (plus a rotation proof from the old key) by apksigner.
+            signingConfig = if (System.getenv("SIGNING_KEYSTORE_B64").isNullOrEmpty()) {
+                signingConfigs.getByName("release")
+            } else {
+                null
+            }
         }
         debug {
             signingConfig = signingConfigs.getByName("release")

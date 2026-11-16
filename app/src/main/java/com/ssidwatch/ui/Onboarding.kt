@@ -118,6 +118,8 @@ fun Onboarding(state: PermState, onRefresh: () -> Unit, onDone: () -> Unit) {
         if (state.ready) {
             AppearanceSection()
             UpdateSection()
+            PrivacySection()
+            LicencesSection()
             Spacer(Modifier.height(16.dp))
             Button(onClick = onDone, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("Done") }
         } else {
