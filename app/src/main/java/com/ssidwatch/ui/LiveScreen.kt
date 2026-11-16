@@ -1,14 +1,16 @@
 package com.ssidwatch.ui
 
-import android.net.TrafficStats
-import android.os.SystemClock
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearEasing
+import android.content.Intent
+import android.graphics.Paint
+import android.net.Uri
+import android.provider.Settings
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,42 +23,58 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.ssidwatch.MonitorService
+import com.ssidwatch.data.LiveRecorder
 import com.ssidwatch.data.Traffic
-import com.ssidwatch.data.Tracker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.TimeZone
+import kotlin.math.abs
 
-private const val WINDOW = 60 // seconds shown on the graph
+private const val MIN_SPAN = 30_000L
+private const val MAX_SPAN = 7L * 24 * 60 * 60 * 1000
+private const val DEFAULT_SPAN = 2L * 60 * 1000
+private const val LIVE_LAG = 1_500L
 
 private val Palette = listOf(
     Color(0xFF4FC3F7), Color(0xFFFFB74D), Color(0xFF81C784), Color(0xFFE57373),
@@ -64,289 +82,402 @@ private val Palette = listOf(
     Color(0xFF9FA8DA), Color(0xFFA1887F),
 )
 
-private data class AppLive(val uid: Int, val rxBps: Long, val txBps: Long, val session: Traffic) {
-    val rate: Long get() = rxBps + txBps
+private val TICKS = longArrayOf(
+    1_000, 2_000, 5_000, 10_000, 15_000, 30_000,
+    60_000, 120_000, 300_000, 600_000, 900_000, 1_800_000,
+    3_600_000, 7_200_000, 10_800_000, 21_600_000, 43_200_000, 86_400_000, 172_800_000,
+)
+
+private val F_SEC = DateTimeFormatter.ofPattern("HH:mm:ss")
+private val F_MIN = DateTimeFormatter.ofPattern("HH:mm")
+private val F_DAY = DateTimeFormatter.ofPattern("d MMM")
+private val F_FULL = DateTimeFormatter.ofPattern("EEE d MMM HH:mm:ss")
+
+private fun tickInterval(span: Long): Long = TICKS.firstOrNull { span / it <= 5 } ?: TICKS.last()
+
+private fun tickLabel(t: Long, iv: Long): String {
+    val z = Instant.ofEpochMilli(t).atZone(ZoneId.systemDefault())
+    return when {
+        iv < 60_000 -> z.format(F_SEC)
+        iv < 86_400_000 -> if (z.hour == 0 && z.minute == 0) z.format(F_DAY) else z.format(F_MIN)
+        else -> z.format(F_DAY)
+    }
+}
+
+private fun rangeLabel(start: Long, end: Long): String {
+    val zone = ZoneId.systemDefault()
+    val s = Instant.ofEpochMilli(start).atZone(zone)
+    val e = Instant.ofEpochMilli(end).atZone(zone)
+    val today = LocalDate.now(zone)
+    fun day(d: LocalDate) = when (d) {
+        today -> "Today"
+        today.minusDays(1) -> "Yesterday"
+        else -> d.format(F_DAY)
+    }
+    return if (s.toLocalDate() == e.toLocalDate()) {
+        "${day(s.toLocalDate())} ${s.format(F_SEC)} – ${e.format(F_SEC)}"
+    } else {
+        "${day(s.toLocalDate())} ${s.format(F_MIN)} – ${day(e.toLocalDate())} ${e.format(F_MIN)}"
+    }
+}
+
+private fun spanLabel(span: Long): String = when {
+    span < 60_000 -> "${span / 1000} s"
+    span < 3_600_000 -> "${Math.round(span / 60_000.0)} min"
+    span < 86_400_000 -> String.format("%.1f h", span / 3_600_000.0).replace(".0 h", " h")
+    else -> String.format("%.1f days", span / 86_400_000.0).replace(".0 days", " days")
+}
+
+private fun maxInView(d: GraphData, start: Long, end: Long): Float {
+    var m = 0f
+    for (i in 0 until d.size) {
+        val bs = d.from + i * d.bucket
+        if (bs + d.bucket < start || bs > end) continue
+        val v = d.rx[i] + d.tx[i]
+        if (v > m) m = v
+    }
+    return m
 }
 
 @Composable
 fun LiveScreen(padding: PaddingValues) {
     val ctx = LocalContext.current
-    var rxNow by remember { mutableLongStateOf(0L) }
-    var txNow by remember { mutableLongStateOf(0L) }
-    val totals = remember { mutableStateListOf<Float>() } // smoothed bps, oldest first
-    var lines by remember { mutableStateOf<Map<Int, List<Float>>>(emptyMap()) } // per-app bps
-    var rates by remember { mutableStateOf<Map<Int, Pair<Long, Long>>>(emptyMap()) }
-    var apps by remember { mutableStateOf<List<AppLive>>(emptyList()) }
-    var measuring by remember { mutableStateOf(true) }
+    var live by remember { mutableStateOf(true) }
+    var span by remember { mutableLongStateOf(DEFAULT_SPAN) }
+    var end by remember { mutableLongStateOf(System.currentTimeMillis() - LIVE_LAG) }
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var data by remember { mutableStateOf<GraphData?>(null) }
+    var selT by remember { mutableStateOf<Long?>(null) }
+    var overlayOn by remember { mutableStateOf(MonitorService.isOverlayOn(ctx)) }
+    var note by remember { mutableStateOf<String?>(null) }
+    val latest by LiveRecorder.latest.collectAsState()
     val colorIndex = remember { HashMap<Int, Int>() }
-    var colors by remember { mutableStateOf<Map<Int, Color>>(emptyMap()) }
-    val shift = remember { Animatable(1f) }
 
-    // Every second: whole-phone Wi-Fi speed (all traffic minus mobile data), lightly
-    // smoothed, then split between apps using their latest measured share.
-    LaunchedEffect(Unit) {
-        fun wifiRx() = (TrafficStats.getTotalRxBytes().coerceAtLeast(0) -
-            TrafficStats.getMobileRxBytes().coerceAtLeast(0)).coerceAtLeast(0)
-        fun wifiTx() = (TrafficStats.getTotalTxBytes().coerceAtLeast(0) -
-            TrafficStats.getMobileTxBytes().coerceAtLeast(0)).coerceAtLeast(0)
-        val work = LinkedHashMap<Int, ArrayList<Float>>()
-        var lastRx = wifiRx()
-        var lastTx = wifiTx()
-        var lastT = SystemClock.elapsedRealtime()
-        var smooth = -1f
-        while (true) {
-            delay(1_000)
-            val rx = wifiRx()
-            val tx = wifiTx()
-            val now = SystemClock.elapsedRealtime()
-            val dt = (now - lastT).coerceAtLeast(1)
-            rxNow = (rx - lastRx).coerceAtLeast(0) * 8_000 / dt
-            txNow = (tx - lastTx).coerceAtLeast(0) * 8_000 / dt
-            lastRx = rx
-            lastTx = tx
-            lastT = now
-
-            val raw = (rxNow + txNow).toFloat()
-            smooth = if (smooth < 0f) raw else 0.55f * raw + 0.45f * smooth
-            totals.add(smooth)
-            while (totals.size > WINDOW + 1) totals.removeAt(0)
-
-            val r = rates
-            val sum = r.values.sumOf { p -> p.first + p.second }.toFloat()
-            for (uid in r.keys) if (uid !in work) work[uid] = ArrayList()
-            val iter = work.entries.iterator()
-            while (iter.hasNext()) {
-                val entry = iter.next()
-                val uid = entry.key
-                val list = entry.value
-                val rate = r[uid]
-                val share = if (rate != null && sum > 0f) (rate.first + rate.second).toFloat() / sum else 0f
-                val targetValue = smooth * share
-                val prevValue = list.lastOrNull() ?: 0f
-                list.add(0.6f * targetValue + 0.4f * prevValue)
-                while (list.size > WINDOW + 1) list.removeAt(0)
-                if (rate == null && list.all { v -> v < 1f }) iter.remove()
-            }
-            for (uid in work.keys) if (uid !in colorIndex) colorIndex[uid] = colorIndex.size
-            colors = work.keys.associateWith { uid -> Palette[(colorIndex[uid] ?: 0) % Palette.size] }
-            lines = work.mapValues { e -> e.value.toList() }
-
-            // scroll the graph smoothly by one step over the next second
-            launch {
-                shift.snapTo(0f)
-                shift.animateTo(1f, tween(durationMillis = 1_000, easing = LinearEasing))
-            }
+    // Frame clock: keeps the graph gliding smoothly while following live.
+    LaunchedEffect(live) {
+        while (live) {
+            withFrameMillis { }
+            nowMs = System.currentTimeMillis()
         }
     }
 
-    // Per-app speeds. Android hands out fresh per-app counters at most every ~15 s, so we
-    // ask exactly that often and work out each app's speed over the time between readings.
-    // The first reading is compared with the background tracker's last one, so apps show
-    // up straight away instead of after a second reading.
-    LaunchedEffect(Unit) {
-        val start = Tracker.liveStart(ctx)
-        var first: Map<Int, Traffic>? = null
-        var prev: Map<Int, Traffic> = emptyMap()
-        var prevT = 0L
-        withContext(Dispatchers.IO) { Tracker.lastBaseline(ctx) }?.let { (base, wall) ->
-            val age = System.currentTimeMillis() - wall
-            if (age in 1..600_000) {
-                prev = base
-                prevT = SystemClock.elapsedRealtime() - age
-            }
-        }
+    // Load data for the current view; keep refreshing while live.
+    val bucketKey = if (live) 0L else end / maxOf(1_000L, span / 240)
+    LaunchedEffect(live, span, bucketKey) {
+        delay(40)
         while (true) {
-            delay(Tracker.msUntilFreshPoll() + 250)
-            while (Tracker.msUntilFreshPoll() > 0) delay(Tracker.msUntilFreshPoll() + 250)
-            val snap = withContext(Dispatchers.IO) { Tracker.liveSnapshot(ctx, start) }
-            val now = SystemClock.elapsedRealtime()
-            if (snap != null) {
-                val base = first ?: snap.also { first = it }
-                if (prevT == 0L) {
-                    prev = snap
-                    prevT = now
-                } else if (snap != prev) {
-                    val dt = (now - prevT).coerceAtLeast(1_000)
-                    val old = prev
-                    rates = snap.mapNotNull { (uid, t) ->
-                        val p = old[uid] ?: Traffic.ZERO
-                        val drx = (t.rx - p.rx).coerceAtLeast(0)
-                        val dtx = (t.tx - p.tx).coerceAtLeast(0)
-                        if (drx + dtx > 0) uid to (drx * 8_000 / dt to dtx * 8_000 / dt) else null
-                    }.toMap()
-                    prev = snap
-                    prevT = now
-                } else if (now - prevT > 40_000) {
-                    rates = emptyMap()
-                }
-                val r = rates
-                apps = snap.mapNotNull { (uid, t) ->
-                    val b = base[uid] ?: Traffic.ZERO
-                    val session = Traffic((t.rx - b.rx).coerceAtLeast(0), (t.tx - b.tx).coerceAtLeast(0))
-                    val rate = r[uid]
-                    if (session.total == 0L && rate == null) null
-                    else AppLive(uid, rate?.first ?: 0L, rate?.second ?: 0L, session)
-                }.sortedWith(compareByDescending<AppLive> { it.rate }.thenByDescending { it.session.total })
-                measuring = false
-            }
+            val e = if (live) System.currentTimeMillis() - LIVE_LAG else end
+            data = withContext(Dispatchers.IO) { loadGraph(ctx, e - span, e) }
+            if (!live) break
+            delay((span / 240).coerceIn(1_000L, 10_000L))
         }
     }
 
-    val target = ((totals.maxOrNull() ?: 0f) * 1.15f).coerceAtLeast(8_000f)
-    val yMax by animateFloatAsState(target, tween(durationMillis = 700), label = "yMax")
+    // Keep the pop-out button in step if the box is closed by long-press.
+    LaunchedEffect(Unit) {
+        while (true) {
+            overlayOn = MonitorService.isOverlayOn(ctx)
+            delay(2_000)
+        }
+    }
+
+    fun onTransform(cx: Float, panX: Float, zoom: Float, width: Float) {
+        if (width <= 0f) return
+        val now = System.currentTimeMillis()
+        val liveEnd = now - LIVE_LAG
+        val curEnd = if (live) liveEnd else end
+        val newSpan = (span / zoom).toLong().coerceIn(MIN_SPAN, MAX_SPAN)
+        if (live) {
+            span = newSpan
+            if (panX > 1f) {
+                live = false
+                end = liveEnd - (panX / width * newSpan).toLong()
+            }
+            return
+        }
+        val anchor = curEnd - span + (cx / width * span).toLong()
+        var newEnd = anchor + ((1f - cx / width) * newSpan).toLong()
+        newEnd -= (panX / width * newSpan).toLong()
+        span = newSpan
+        if (newEnd >= liveEnd) {
+            live = true
+        } else {
+            end = newEnd.coerceAtLeast(now - MAX_SPAN)
+        }
+    }
+
+    val d = data
+    val viewEndC = if (live) System.currentTimeMillis() - LIVE_LAG else end
+    val target = d?.let { maxInView(it, viewEndC - span, viewEndC) } ?: 0f
+    val yMax by animateFloatAsState((target * 1.15f).coerceAtLeast(8_000f), tween(durationMillis = 500), label = "yMax")
+    val colors: Map<Int, Color> = d?.let { dd ->
+        (dd.apps.map { it.first } + dd.appTotals.map { it.first }).distinct().associateWith { uid ->
+            Palette[colorIndex.getOrPut(uid) { colorIndex.size } % Palette.size]
+        }
+    } ?: emptyMap()
 
     LazyColumn(contentPadding = padding) {
         item {
             Card(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
             ) {
-                Column(Modifier.padding(16.dp)) {
+                Column(Modifier.padding(14.dp)) {
                     Text(
                         "Wi-Fi right now",
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Spacer(Modifier.height(4.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("↓ " + fmtBits(rxNow), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "↓ " + fmtBits(LiveRecorder.bps(latest.rx, latest.dur)),
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
                         Spacer(Modifier.width(20.dp))
-                        Text("↑ " + fmtBits(txNow), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-                    }
-                    Spacer(Modifier.height(10.dp))
-                    Text(
-                        "Scale " + fmtBits(yMax.toLong()),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    LiveGraph(
-                        totals = totals,
-                        lines = lines,
-                        colors = colors,
-                        shift = { shift.value },
-                        yMax = yMax,
-                        modifier = Modifier.fillMaxWidth().height(190.dp)
-                    )
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("60 s ago", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("now", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            "↑ " + fmtBits(LiveRecorder.bps(latest.tx, latest.dur)),
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
                     Spacer(Modifier.height(8.dp))
-                    Legend(lines.keys.toList(), colors)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(
+                            if (live) "Live · last ${spanLabel(span)}" else rangeLabel(end - span, end),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (live) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            "Scale " + fmtBits(yMax.toLong()),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    GraphCanvas(
+                        data = d,
+                        span = span,
+                        viewEnd = { if (live) nowMs - LIVE_LAG else end },
+                        yMax = yMax,
+                        colors = colors,
+                        selT = selT,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(230.dp)
+                            .pointerInput(Unit) {
+                                detectTransformGestures { centroid, pan, zoom, _ ->
+                                    onTransform(centroid.x, pan.x, zoom, size.width.toFloat())
+                                }
+                            }
+                            .pointerInput(Unit) {
+                                detectTapGestures(
+                                    onTap = { o ->
+                                        val w = size.width.toFloat()
+                                        val vEnd = if (live) System.currentTimeMillis() - LIVE_LAG else end
+                                        val t = vEnd - span + (o.x / w * span).toLong()
+                                        val cur = selT
+                                        selT = if (cur != null && abs(cur - t) < span / 25) null else t
+                                    },
+                                    onDoubleTap = {
+                                        live = true
+                                        span = DEFAULT_SPAN
+                                        selT = null
+                                    }
+                                )
+                            }
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedButton(onClick = { span = (span * 2).coerceAtMost(MAX_SPAN) }) { Text("−") }
+                        OutlinedButton(onClick = { span = (span / 2).coerceAtLeast(MIN_SPAN) }) { Text("+") }
+                        FilledTonalButton(
+                            onClick = {
+                                live = true
+                                selT = null
+                            },
+                            enabled = !live
+                        ) { Text("Live") }
+                        Spacer(Modifier.weight(1f))
+                        FilledTonalButton(onClick = {
+                            when {
+                                overlayOn -> {
+                                    MonitorService.setOverlay(ctx, false)
+                                    overlayOn = false
+                                    note = null
+                                }
+                                !Settings.canDrawOverlays(ctx) -> {
+                                    note = "Allow “Display over other apps” for SSID Watch, then tap Pop out again."
+                                    runCatching {
+                                        ctx.startActivity(
+                                            Intent(
+                                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                                Uri.parse("package:" + ctx.packageName)
+                                            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        )
+                                    }
+                                }
+                                else -> {
+                                    MonitorService.setOverlay(ctx, true)
+                                    overlayOn = true
+                                    note = "Floating box on. Drag it to move it, tap it to open SSID Watch, long-press it to close it."
+                                }
+                            }
+                        }) { Text(if (overlayOn) "Close pop-out" else "Pop out") }
+                    }
+                    note?.let {
+                        Spacer(Modifier.height(6.dp))
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
         }
-        item { SectionTitle("Apps using Wi-Fi") }
-        if (measuring) {
-            item { EmptyNote("Measuring…") }
-        } else if (apps.isEmpty()) {
-            item { EmptyNote("No app has used Wi-Fi since you opened this tab.") }
-        }
-        val maxRate = (apps.maxOfOrNull { it.rate } ?: 0L).coerceAtLeast(1L)
-        items(apps, key = { it.uid }) { a ->
-            LiveAppRow(a, a.rate.toFloat() / maxRate, colors[a.uid] ?: MaterialTheme.colorScheme.outline)
-        }
         item {
             EmptyNote(
-                "Each coloured line is one app; the grey area is all Wi-Fi traffic. The total updates every " +
-                    "second. Android only lets apps read per-app counters about every 15 seconds, so app " +
-                    "speeds refresh at that pace. \u201cSession\u201d is data used since you opened this tab."
+                "Drag the graph to go back in time, pinch to zoom (30 s to 7 days), tap for exact values, " +
+                    "double-tap to return to live. Recording runs all the time and keeps 7 days."
             )
+        }
+        item { SectionTitle(if (live) "Apps in the last ${spanLabel(span)}" else "Apps in this view") }
+        if (d == null) {
+            item { EmptyNote("Loading…") }
+        } else if (d.appTotals.isEmpty()) {
+            item { EmptyNote("No app used Wi-Fi in this time range.") }
+        }
+        if (d != null) {
+            val maxTotal = (d.appTotals.maxOfOrNull { it.second.total } ?: 0L).coerceAtLeast(1L)
+            items(d.appTotals, key = { it.first }) { (uid, t) ->
+                LiveAppRow(
+                    uid = uid,
+                    t = t,
+                    fraction = t.total.toFloat() / maxTotal,
+                    color = colors[uid] ?: MaterialTheme.colorScheme.outline,
+                    activeNow = live && uid in d.active
+                )
+            }
         }
         item { Spacer(Modifier.height(16.dp)) }
     }
 }
 
-/** Smooth, continuously scrolling graph: grey area = total, one coloured line per app. */
 @Composable
-private fun LiveGraph(
-    totals: List<Float>,
-    lines: Map<Int, List<Float>>,
-    colors: Map<Int, Color>,
-    shift: () -> Float,
+private fun GraphCanvas(
+    data: GraphData?,
+    span: Long,
+    viewEnd: () -> Long,
     yMax: Float,
+    colors: Map<Int, Color>,
+    selT: Long?,
     modifier: Modifier,
 ) {
     val grid = MaterialTheme.colorScheme.outlineVariant
+    val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
     val totalColor = MaterialTheme.colorScheme.onSurfaceVariant
-    Canvas(modifier.padding(vertical = 6.dp)) {
+    val tipBg = MaterialTheme.colorScheme.surface
+    val tipFg = MaterialTheme.colorScheme.onSurface
+    val paint = remember { Paint(Paint.ANTI_ALIAS_FLAG) }
+
+    Canvas(modifier) {
         val w = size.width
-        val h = size.height
+        val axisH = 18.dp.toPx()
+        val h = size.height - axisH
+        val vEnd = viewEnd()
+        val vStart = vEnd - span
+        val maxV = yMax.coerceAtLeast(1f)
+        val native = drawContext.canvas.nativeCanvas
+
         for (k in 0..4) {
             val y = h * k / 4f
             drawLine(grid, Offset(0f, y), Offset(w, y), strokeWidth = 1f)
         }
-        val step = w / (WINDOW - 1)
-        val maxV = yMax.coerceAtLeast(1f)
-        val sh = shift()
 
-        fun points(values: List<Float>): List<Offset> {
-            val n = values.size
-            return values.mapIndexed { i, v ->
-                val x = w - (n - 1 - i) * step + (1f - sh) * step
-                val y = h - h * (v / maxV).coerceIn(0f, 1f)
-                Offset(x, y)
-            }
+        // time axis
+        paint.textSize = 10.sp.toPx()
+        paint.color = labelColor.toArgb()
+        paint.textAlign = Paint.Align.CENTER
+        val iv = tickInterval(span)
+        val off = TimeZone.getDefault().getOffset(vStart).toLong()
+        var t = ((vStart + off) / iv + 1) * iv - off
+        while (t <= vEnd) {
+            val x = (t - vStart).toFloat() / span * w
+            drawLine(grid.copy(alpha = 0.5f), Offset(x, 0f), Offset(x, h), strokeWidth = 1f)
+            native.drawText(tickLabel(t, iv), x, size.height - 4.dp.toPx(), paint)
+            t += iv
         }
+
+        val d = data ?: return@Canvas
+        val b = d.bucket
+        fun xOf(time: Long) = (time - vStart).toFloat() / span * w
+        fun yOf(v: Float) = h - h * (v / maxV).coerceIn(0f, 1f)
+
+        val lastComplete = ((d.dataUntil - d.from) / b).toInt() - 1
+        val i0 = ((vStart - d.from) / b - 1).toInt().coerceAtLeast(0)
+        val i1 = minOf(((vEnd - d.from) / b + 1).toInt(), d.size - 1, lastComplete)
 
         fun smoothPath(p: List<Offset>): Path {
             val path = Path()
             path.moveTo(p[0].x, p[0].y)
             for (i in 1 until p.size) {
                 val a = p[i - 1]
-                val b = p[i]
-                val mx = (a.x + b.x) / 2f
-                path.cubicTo(mx, a.y, mx, b.y, b.x, b.y)
+                val c = p[i]
+                val mx = (a.x + c.x) / 2f
+                path.cubicTo(mx, a.y, mx, c.y, c.x, c.y)
             }
             return path
         }
 
-        clipRect {
-            if (totals.size >= 2) {
-                val p = points(totals)
-                val fill = smoothPath(p)
-                fill.lineTo(p.last().x, h)
-                fill.lineTo(p.first().x, h)
+        if (i1 - i0 >= 1) {
+            fun pts(get: (Int) -> Float) = (i0..i1).map { i -> Offset(xOf(d.from + i * b + b / 2), yOf(get(i))) }
+            clipRect(0f, 0f, w, h) {
+                val tp = pts { i -> d.rx[i] + d.tx[i] }
+                val fill = smoothPath(tp)
+                fill.lineTo(tp.last().x, h)
+                fill.lineTo(tp.first().x, h)
                 fill.close()
                 drawPath(fill, totalColor.copy(alpha = 0.14f))
-                drawPath(smoothPath(p), totalColor.copy(alpha = 0.5f), style = Stroke(width = 1.5.dp.toPx()))
-            }
-            // biggest current users drawn last so they sit on top
-            lines.entries
-                .sortedBy { e -> e.value.lastOrNull() ?: 0f }
-                .forEach { e ->
-                    if (e.value.size >= 2) {
-                        drawPath(
-                            smoothPath(points(e.value)),
-                            colors[e.key] ?: totalColor,
-                            style = Stroke(width = 2.5.dp.toPx())
-                        )
-                    }
+                drawPath(smoothPath(tp), totalColor.copy(alpha = 0.5f), style = Stroke(width = 1.5.dp.toPx()))
+                d.apps.asReversed().forEach { (uid, arr) ->
+                    drawPath(
+                        smoothPath(pts { i -> arr[i] }),
+                        colors[uid] ?: totalColor,
+                        style = Stroke(width = 2.5.dp.toPx())
+                    )
                 }
+            }
         }
-    }
-}
 
-@Composable
-private fun Legend(uids: List<Int>, colors: Map<Int, Color>) {
-    if (uids.isEmpty()) return
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        items(uids, key = { it }) { uid ->
-            val app = rememberApp(uid)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier
-                        .width(14.dp)
-                        .height(4.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(colors[uid] ?: Color.Gray)
+        // tapped point: marker line + values box
+        val st = selT
+        if (st != null && st in vStart..vEnd) {
+            val x = xOf(st)
+            drawLine(tipFg.copy(alpha = 0.7f), Offset(x, 0f), Offset(x, h), strokeWidth = 1.5.dp.toPx())
+            val i = ((st - d.from) / b).toInt()
+            if (i in 0 until d.size) {
+                val lines = listOf(
+                    Instant.ofEpochMilli(st).atZone(ZoneId.systemDefault()).format(F_FULL),
+                    "↓ " + fmtBits(d.rx[i].toLong()) + "   ↑ " + fmtBits(d.tx[i].toLong()),
                 )
-                Spacer(Modifier.width(5.dp))
-                val icon = app?.icon
-                if (icon != null) {
-                    Image(icon, contentDescription = app?.name, modifier = Modifier.size(20.dp))
-                } else {
-                    Text((app?.name ?: "?").take(12), style = MaterialTheme.typography.labelSmall)
+                paint.textSize = 11.sp.toPx()
+                paint.textAlign = Paint.Align.LEFT
+                val pad = 8.dp.toPx()
+                val lineH = 15.sp.toPx()
+                val boxW = lines.maxOf { paint.measureText(it) } + pad * 2
+                val boxH = lineH * lines.size + pad * 1.5f
+                val bx = if (x + 10.dp.toPx() + boxW < w) x + 10.dp.toPx() else (x - 10.dp.toPx() - boxW).coerceAtLeast(0f)
+                val by = 6.dp.toPx()
+                drawRoundRect(
+                    tipBg.copy(alpha = 0.94f),
+                    topLeft = Offset(bx, by),
+                    size = Size(boxW, boxH),
+                    cornerRadius = CornerRadius(8.dp.toPx())
+                )
+                paint.color = tipFg.toArgb()
+                lines.forEachIndexed { k, s ->
+                    native.drawText(s, bx + pad, by + pad + lineH * (k + 1) - 4.dp.toPx(), paint)
                 }
             }
         }
@@ -354,9 +485,8 @@ private fun Legend(uids: List<Int>, colors: Map<Int, Color>) {
 }
 
 @Composable
-private fun LiveAppRow(a: AppLive, fraction: Float, color: Color) {
-    val app = rememberApp(a.uid)
-    val active = a.rate > 0
+private fun LiveAppRow(uid: Int, t: Traffic, fraction: Float, color: Color, activeNow: Boolean) {
+    val app = rememberApp(uid)
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box {
@@ -371,7 +501,7 @@ private fun LiveAppRow(a: AppLive, fraction: Float, color: Color) {
                         Text((app?.name ?: "?").take(1).uppercase(), fontWeight = FontWeight.Bold)
                     }
                 }
-                if (active) {
+                if (activeNow) {
                     Box(
                         Modifier
                             .align(Alignment.BottomEnd)
@@ -380,7 +510,7 @@ private fun LiveAppRow(a: AppLive, fraction: Float, color: Color) {
                             .background(MaterialTheme.colorScheme.background)
                             .padding(2.dp)
                             .clip(CircleShape)
-                            .background(color)
+                            .background(Color(0xFF43A047))
                     )
                 }
             }
@@ -393,16 +523,15 @@ private fun LiveAppRow(a: AppLive, fraction: Float, color: Color) {
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    if (active) "↓ ${fmtBits(a.rxBps)}   ↑ ${fmtBits(a.txBps)}" else "Idle",
+                    "↓ ${fmtBytes(t.rx)}   ↑ ${fmtBytes(t.tx)}" + if (activeNow) "   · using data now" else "",
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (active) color else MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Spacer(Modifier.width(8.dp))
-            Column(horizontalAlignment = Alignment.End) {
-                Text(fmtBytes(a.session.total), style = MaterialTheme.typography.titleMedium)
-                Text("session", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            Box(Modifier.size(10.dp).clip(CircleShape).background(color))
+            Spacer(Modifier.width(8.dp))
+            Text(fmtBytes(t.total), style = MaterialTheme.typography.titleMedium)
         }
         Spacer(Modifier.height(6.dp))
         ProportionBar(fraction, color, Modifier.fillMaxWidth().padding(start = 52.dp))

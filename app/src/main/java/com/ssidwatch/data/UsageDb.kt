@@ -23,8 +23,11 @@ data class Traffic(val rx: Long, val tx: Long) {
  *  baseline – last cumulative counters read from Android, per uid
  *  meta     – small key/value store (anchor time, current SSID, ...)
  */
+/** Bytes moved during [ts - dur, ts] (wall-clock ms). */
+data class LivePoint(val ts: Long, val dur: Long, val rx: Long, val tx: Long)
+
 class UsageDb private constructor(ctx: Context) :
-    SQLiteOpenHelper(ctx, "usage.db", null, 1) {
+    SQLiteOpenHelper(ctx, "usage.db", null, 2) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -37,9 +40,21 @@ class UsageDb private constructor(ctx: Context) :
         )
         db.execSQL("CREATE TABLE baseline(uid INTEGER PRIMARY KEY, rx INTEGER NOT NULL, tx INTEGER NOT NULL)")
         db.execSQL("CREATE TABLE meta(k TEXT PRIMARY KEY, v TEXT)")
+        createLiveTables(db)
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) createLiveTables(db)
+    }
+
+    /** Continuous recording for the Live graph: whole-phone Wi-Fi bytes and per-app bytes.
+     *  Each row covers the interval [ts - dur, ts]. */
+    private fun createLiveTables(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS live(ts INTEGER NOT NULL, dur INTEGER NOT NULL, rx INTEGER NOT NULL, tx INTEGER NOT NULL)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS live_ts ON live(ts)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS live_app(ts INTEGER NOT NULL, dur INTEGER NOT NULL, uid INTEGER NOT NULL, rx INTEGER NOT NULL, tx INTEGER NOT NULL)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS live_app_ts ON live_app(ts)")
+    }
 
     // ---- meta ---------------------------------------------------------------
 
@@ -132,6 +147,75 @@ class UsageDb private constructor(ctx: Context) :
         val db = writableDatabase
         db.delete("usage", "ssid=? AND day<?", arrayOf(ssid, beforeDay))
         db.delete("hourly", "ssid=? AND day<?", arrayOf(ssid, beforeDay))
+    }
+
+    // ---- live recording -------------------------------------------------------
+
+    fun insertLive(points: List<LivePoint>) {
+        if (points.isEmpty()) return
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val st = db.compileStatement("INSERT INTO live(ts, dur, rx, tx) VALUES(?,?,?,?)")
+            for (p in points) {
+                st.clearBindings()
+                st.bindLong(1, p.ts)
+                st.bindLong(2, p.dur)
+                st.bindLong(3, p.rx)
+                st.bindLong(4, p.tx)
+                st.executeInsert()
+            }
+            st.close()
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    fun addLiveApp(ts: Long, dur: Long, uid: Int, rx: Long, tx: Long) {
+        val st = writableDatabase.compileStatement("INSERT INTO live_app(ts, dur, uid, rx, tx) VALUES(?,?,?,?,?)")
+        st.bindLong(1, ts)
+        st.bindLong(2, dur)
+        st.bindLong(3, uid.toLong())
+        st.bindLong(4, rx)
+        st.bindLong(5, tx)
+        st.executeInsert()
+        st.close()
+    }
+
+    /** Raw rows overlapping [from, to]. */
+    fun liveRows(from: Long, to: Long): List<LivePoint> =
+        query("SELECT ts, dur, rx, tx FROM live WHERE ts > ? AND ts - dur < ? ORDER BY ts", arrayOf(from.toString(), to.toString())) { c ->
+            LivePoint(c.getLong(0), c.getLong(1), c.getLong(2), c.getLong(3))
+        }
+
+    /** Rows overlapping [from, to], summed into [agg]-ms slots (for zoomed-out views). */
+    fun liveRowsAgg(from: Long, to: Long, agg: Long): List<LivePoint> =
+        query(
+            "SELECT (ts / $agg) * $agg + $agg, SUM(rx), SUM(tx) FROM live WHERE ts > ? AND ts - dur < ? GROUP BY ts / $agg",
+            arrayOf(from.toString(), to.toString())
+        ) { c -> LivePoint(c.getLong(0), agg, c.getLong(1), c.getLong(2)) }
+
+    fun liveAppRows(from: Long, to: Long): List<Pair<Int, LivePoint>> =
+        query("SELECT uid, ts, dur, rx, tx FROM live_app WHERE ts > ? AND ts - dur < ?", arrayOf(from.toString(), to.toString())) { c ->
+            c.getInt(0) to LivePoint(c.getLong(1), c.getLong(2), c.getLong(3), c.getLong(4))
+        }
+
+    fun liveAppRowsAgg(from: Long, to: Long, agg: Long): List<Pair<Int, LivePoint>> =
+        query(
+            "SELECT uid, (ts / $agg) * $agg + $agg, SUM(rx), SUM(tx) FROM live_app WHERE ts > ? AND ts - dur < ? " +
+                "GROUP BY uid, ts / $agg",
+            arrayOf(from.toString(), to.toString())
+        ) { c -> c.getInt(0) to LivePoint(c.getLong(1), agg, c.getLong(2), c.getLong(3)) }
+
+    /** Apps with any traffic recorded since [since]. */
+    fun liveActiveUids(since: Long): Set<Int> =
+        query("SELECT DISTINCT uid FROM live_app WHERE ts > ?", arrayOf(since.toString())) { c -> c.getInt(0) }.toSet()
+
+    fun pruneLive(before: Long) {
+        val db = writableDatabase
+        db.delete("live", "ts < ?", arrayOf(before.toString()))
+        db.delete("live_app", "ts < ?", arrayOf(before.toString()))
     }
 
     fun clearAll() {

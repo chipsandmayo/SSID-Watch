@@ -105,6 +105,9 @@ object Tracker {
                 }
                 val base = db.baselines()
                 val ssid = db.getMeta(K_SSID) ?: db.getMeta(K_PREV_SSID) ?: UNKNOWN
+                val lastT = db.getMeta(K_LAST)?.toLongOrNull()
+                val dur = if (lastT != null) now - lastT else 0L
+                val recordLive = dur in 1..LIVE_MAX_GAP
                 var sum = Traffic.ZERO
                 for ((uid, t) in current) {
                     val b = base[uid] ?: Traffic.ZERO
@@ -112,6 +115,7 @@ object Tracker {
                     val dtx = (t.tx - b.tx).coerceAtLeast(0)
                     if (drx + dtx > 0) {
                         db.addUsage(day, ssid, uid, drx, dtx)
+                        if (recordLive) db.addLiveApp(now, dur, uid, drx, dtx)
                         sum += Traffic(drx, dtx)
                     }
                 }
@@ -147,6 +151,7 @@ object Tracker {
      * spaced at least this far apart wherever we have a choice.
      */
     const val POLL_GAP_MS = 16_000L
+    private const val LIVE_MAX_GAP = 6 * 60 * 60 * 1000L
 
     @Volatile
     private var lastQueryAt = 0L // SystemClock.elapsedRealtime()
