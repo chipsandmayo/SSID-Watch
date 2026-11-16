@@ -2,6 +2,7 @@ package com.ssidwatch.data
 
 import android.content.Context
 import android.net.TrafficStats
+import com.ssidwatch.capture.CaptureStats
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -26,11 +27,15 @@ object LiveRecorder {
     /** Most recent measurement; the UI and floating box show its speed. */
     val latest: StateFlow<LivePoint> = _latest
 
+    // During packet capture, traffic also passes through the capture interface; subtract it
+    // so it isn't counted twice.
     private fun wifiRx() = (TrafficStats.getTotalRxBytes().coerceAtLeast(0) -
-        TrafficStats.getMobileRxBytes().coerceAtLeast(0)).coerceAtLeast(0)
+        TrafficStats.getMobileRxBytes().coerceAtLeast(0) -
+        CaptureStats.writtenToTun.get()).coerceAtLeast(0)
 
     private fun wifiTx() = (TrafficStats.getTotalTxBytes().coerceAtLeast(0) -
-        TrafficStats.getMobileTxBytes().coerceAtLeast(0)).coerceAtLeast(0)
+        TrafficStats.getMobileTxBytes().coerceAtLeast(0) -
+        CaptureStats.readFromTun.get()).coerceAtLeast(0)
 
     fun tick(ctx: Context) {
         val now = System.currentTimeMillis()

@@ -154,8 +154,12 @@ object ConnectionInfo {
 
     @Suppress("DEPRECATION")
     private fun wifiNetwork(cm: ConnectivityManager): Network? {
-        fun isWifi(n: Network) =
-            cm.getNetworkCapabilities(n)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+        fun isWifi(n: Network): Boolean {
+            val caps = cm.getNetworkCapabilities(n) ?: return false
+            // skip VPNs (including the packet capture), which also report the Wi-Fi transport
+            return caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
+                !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+        }
         cm.activeNetwork?.let { if (isWifi(it)) return it }
         return cm.allNetworks.firstOrNull { isWifi(it) }
     }
