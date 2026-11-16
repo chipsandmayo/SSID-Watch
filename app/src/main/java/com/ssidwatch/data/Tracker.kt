@@ -140,6 +140,15 @@ object Tracker {
 
     private fun alignToDay(t: Long) = t - (t % DAY_MS)
 
+    /** A fixed start time for live per-app counters (bucket-aligned, yesterday 00:00 UTC). */
+    fun liveStart(): Long = alignToDay(System.currentTimeMillis()) - DAY_MS
+
+    /** Per-app cumulative Wi-Fi bytes since [start]; used by the Live tab. */
+    fun liveSnapshot(ctx: Context, start: Long): Map<Int, Traffic>? {
+        val nsm = ctx.applicationContext.getSystemService(NetworkStatsManager::class.java) ?: return null
+        return cumulative(nsm, start, System.currentTimeMillis())
+    }
+
     /** Per-uid Wi-Fi bytes from [start] up to now (the end is pushed into the future so
      *  the current, still-filling bucket is counted in full rather than pro-rated). */
     private fun cumulative(nsm: NetworkStatsManager, start: Long, now: Long): Map<Int, Traffic>? =

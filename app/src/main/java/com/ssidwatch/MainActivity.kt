@@ -47,6 +47,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.ssidwatch.data.Tracker
 import com.ssidwatch.ui.AppTheme
 import com.ssidwatch.ui.ConnectionScreen
+import com.ssidwatch.ui.LiveScreen
 import com.ssidwatch.ui.DayScreen
 import com.ssidwatch.ui.HistoryScreen
 import com.ssidwatch.ui.Onboarding
@@ -153,7 +154,8 @@ private fun MainScreen(perms: PermState, onFixPermissions: () -> Unit) {
             )
             TabRow(selectedTabIndex = topTab) {
                 Tab(selected = topTab == 0, onClick = { topTab = 0 }, text = { Text("Usage") })
-                Tab(selected = topTab == 1, onClick = { topTab = 1 }, text = { Text("Connection") })
+                Tab(selected = topTab == 1, onClick = { topTab = 1 }, text = { Text("Live") })
+                Tab(selected = topTab == 2, onClick = { topTab = 2 }, text = { Text("Connection") })
             }
             }
         },
@@ -190,6 +192,8 @@ private fun MainScreen(perms: PermState, onFixPermissions: () -> Unit) {
             }
             val listPadding = PaddingValues(bottom = inner.calculateBottomPadding())
             if (topTab == 1) {
+                LiveScreen(padding = listPadding)
+            } else if (topTab == 2) {
                 ConnectionScreen(padding = listPadding)
             } else when (tab) {
                 0 -> DayScreen(
