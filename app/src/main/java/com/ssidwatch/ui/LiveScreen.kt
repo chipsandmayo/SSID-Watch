@@ -7,6 +7,9 @@ import android.provider.Settings
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -148,6 +151,7 @@ fun LiveScreen(padding: PaddingValues) {
     var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var data by remember { mutableStateOf<GraphData?>(null) }
     var selT by remember { mutableStateOf<Long?>(null) }
+    var focusUid by remember { mutableStateOf<Int?>(null) }
     var overlayOn by remember { mutableStateOf(MonitorService.isOverlayOn(ctx)) }
     var note by remember { mutableStateOf<String?>(null) }
     val latest by LiveRecorder.latest.collectAsState()
@@ -262,6 +266,7 @@ fun LiveScreen(padding: PaddingValues) {
                         yMax = yMax,
                         colors = colors,
                         selT = selT,
+                        focusUid = focusUid,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(230.dp)
@@ -287,6 +292,17 @@ fun LiveScreen(padding: PaddingValues) {
                                 )
                             }
                     )
+                    val shownApps = d?.apps?.map { it.first }.orEmpty()
+                    if (focusUid != null && focusUid !in shownApps) focusUid = null
+                    if (shownApps.isNotEmpty()) {
+                        Spacer(Modifier.height(6.dp))
+                        AppIconLegend(
+                            uids = shownApps,
+                            colors = colors,
+                            focusUid = focusUid,
+                            onTap = { uid -> focusUid = if (focusUid == uid) null else uid }
+                        )
+                    }
                     Spacer(Modifier.height(8.dp))
                     Row(
                         Modifier.fillMaxWidth(),
@@ -372,6 +388,7 @@ private fun GraphCanvas(
     yMax: Float,
     colors: Map<Int, Color>,
     selT: Long?,
+    focusUid: Int?,
     modifier: Modifier,
 ) {
     val grid = MaterialTheme.colorScheme.outlineVariant
@@ -440,11 +457,14 @@ private fun GraphCanvas(
                 fill.close()
                 drawPath(fill, totalColor.copy(alpha = 0.14f))
                 drawPath(smoothPath(tp), totalColor.copy(alpha = 0.5f), style = Stroke(width = 1.5.dp.toPx()))
-                d.apps.asReversed().forEach { (uid, arr) ->
+                // the focused app (if any) is drawn last, thicker, with the others faded
+                d.apps.asReversed().sortedBy { it.first == focusUid }.forEach { (uid, arr) ->
+                    val dimmed = focusUid != null && uid != focusUid
+                    val c = colors[uid] ?: totalColor
                     drawPath(
                         smoothPath(pts { i -> arr[i] }),
-                        colors[uid] ?: totalColor,
-                        style = Stroke(width = 2.5.dp.toPx())
+                        if (dimmed) c.copy(alpha = 0.18f) else c,
+                        style = Stroke(width = (if (uid == focusUid) 3.5 else 2.5).dp.toPx())
                     )
                 }
             }
@@ -479,6 +499,55 @@ private fun GraphCanvas(
                 lines.forEachIndexed { k, s ->
                     native.drawText(s, bx + pad, by + pad + lineH * (k + 1) - 4.dp.toPx(), paint)
                 }
+            }
+        }
+    }
+}
+
+/** App icons for the lines on the graph, each underlined in its line colour. Tap to focus a line. */
+@Composable
+private fun AppIconLegend(uids: List<Int>, colors: Map<Int, Color>, focusUid: Int?, onTap: (Int) -> Unit) {
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        items(uids, key = { it }) { uid ->
+            val app = rememberApp(uid)
+            val color = colors[uid] ?: Color.Gray
+            val focused = focusUid == uid
+            val faded = focusUid != null && !focused
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (focused) color.copy(alpha = 0.18f) else Color.Transparent)
+                    .clickable { onTap(uid) }
+                    .padding(horizontal = 4.dp, vertical = 3.dp)
+            ) {
+                val icon = app?.icon
+                if (icon != null) {
+                    Image(
+                        icon,
+                        contentDescription = app?.name,
+                        alpha = if (faded) 0.35f else 1f,
+                        modifier = Modifier.size(28.dp)
+                    )
+                } else {
+                    Box(
+                        Modifier.size(28.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surface),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text((app?.name ?: "?").take(1).uppercase(), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                }
+                Spacer(Modifier.height(3.dp))
+                Box(
+                    Modifier
+                        .width(22.dp)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(if (faded) color.copy(alpha = 0.3f) else color)
+                )
             }
         }
     }
