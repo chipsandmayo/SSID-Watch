@@ -139,23 +139,33 @@ fun LiveScreen(padding: PaddingValues) {
         }
     }
 
-    // Per-app speeds. Android refreshes per-app counters less often than the total,
-    // so rates are worked out over the time between counter changes.
+    // Per-app speeds. Android hands out fresh per-app counters at most every ~15 s, so we
+    // ask exactly that often and work out each app's speed over the time between readings.
+    // The first reading is compared with the background tracker's last one, so apps show
+    // up straight away instead of after a second reading.
     LaunchedEffect(Unit) {
-        val start = Tracker.liveStart()
+        val start = Tracker.liveStart(ctx)
         var first: Map<Int, Traffic>? = null
         var prev: Map<Int, Traffic> = emptyMap()
         var prevT = 0L
+        withContext(Dispatchers.IO) { Tracker.lastBaseline(ctx) }?.let { (base, wall) ->
+            val age = System.currentTimeMillis() - wall
+            if (age in 1..600_000) {
+                prev = base
+                prevT = SystemClock.elapsedRealtime() - age
+            }
+        }
         while (true) {
+            delay(Tracker.msUntilFreshPoll() + 250)
+            while (Tracker.msUntilFreshPoll() > 0) delay(Tracker.msUntilFreshPoll() + 250)
             val snap = withContext(Dispatchers.IO) { Tracker.liveSnapshot(ctx, start) }
             val now = SystemClock.elapsedRealtime()
             if (snap != null) {
-                val base = first ?: snap.also {
-                    first = it
-                    prev = it
+                val base = first ?: snap.also { first = it }
+                if (prevT == 0L) {
+                    prev = snap
                     prevT = now
-                }
-                if (snap != prev) {
+                } else if (snap != prev) {
                     val dt = (now - prevT).coerceAtLeast(1_000)
                     val old = prev
                     rates = snap.mapNotNull { (uid, t) ->
@@ -166,7 +176,7 @@ fun LiveScreen(padding: PaddingValues) {
                     }.toMap()
                     prev = snap
                     prevT = now
-                } else if (now - prevT > 20_000) {
+                } else if (now - prevT > 40_000) {
                     rates = emptyMap()
                 }
                 val r = rates
@@ -179,7 +189,6 @@ fun LiveScreen(padding: PaddingValues) {
                 }.sortedWith(compareByDescending<AppLive> { it.rate }.thenByDescending { it.session.total })
                 measuring = false
             }
-            delay(2_000)
         }
     }
 
@@ -240,8 +249,8 @@ fun LiveScreen(padding: PaddingValues) {
         item {
             EmptyNote(
                 "Each coloured line is one app; the grey area is all Wi-Fi traffic. The total updates every " +
-                    "second; each app's share is refreshed every few seconds because Android updates app " +
-                    "counters less often. “Session” is data used since you opened this tab."
+                    "second. Android only lets apps read per-app counters about every 15 seconds, so app " +
+                    "speeds refresh at that pace. \u201cSession\u201d is data used since you opened this tab."
             )
         }
         item { Spacer(Modifier.height(16.dp)) }

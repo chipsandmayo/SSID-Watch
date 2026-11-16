@@ -4,6 +4,7 @@ import android.app.usage.NetworkStats
 import android.app.usage.NetworkStatsManager
 import android.content.Context
 import android.net.ConnectivityManager
+import android.os.SystemClock
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
@@ -140,8 +141,31 @@ object Tracker {
 
     private fun alignToDay(t: Long) = t - (t % DAY_MS)
 
-    /** A fixed start time for live per-app counters (bucket-aligned, yesterday 00:00 UTC). */
-    fun liveStart(): Long = alignToDay(System.currentTimeMillis()) - DAY_MS
+    /**
+     * Android only refreshes per-app counters for an app if it hasn't asked within the last
+     * ~15 s, and every request (even a refused one) restarts that wait. So all requests are
+     * spaced at least this far apart wherever we have a choice.
+     */
+    const val POLL_GAP_MS = 16_000L
+
+    @Volatile
+    private var lastQueryAt = 0L // SystemClock.elapsedRealtime()
+
+    /** How long to wait before the next stats request will get fresh numbers. */
+    fun msUntilFreshPoll(): Long =
+        if (lastQueryAt == 0L) 0L
+        else (lastQueryAt + POLL_GAP_MS - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+
+    /** Start time for live counters: the tracker's own anchor, so they compare with its baselines. */
+    fun liveStart(ctx: Context): Long =
+        UsageDb.get(ctx).getMeta(K_ANCHOR)?.toLongOrNull() ?: (alignToDay(System.currentTimeMillis()) - DAY_MS)
+
+    /** The tracker's most recent per-app counters and when they were taken (wall-clock ms). */
+    fun lastBaseline(ctx: Context): Pair<Map<Int, Traffic>, Long>? {
+        val db = UsageDb.get(ctx)
+        val t = db.getMeta(K_LAST)?.toLongOrNull() ?: return null
+        return db.baselines() to t
+    }
 
     /** Per-app cumulative Wi-Fi bytes since [start]; used by the Live tab. */
     fun liveSnapshot(ctx: Context, start: Long): Map<Int, Traffic>? {
@@ -157,6 +181,7 @@ object Tracker {
     @Suppress("DEPRECATION")
     private fun query(nsm: NetworkStatsManager, start: Long, end: Long): Map<Int, Traffic>? {
         return try {
+            lastQueryAt = SystemClock.elapsedRealtime()
             val stats = nsm.querySummary(ConnectivityManager.TYPE_WIFI, null, start, end)
             val acc = HashMap<Int, LongArray>()
             val b = NetworkStats.Bucket()
@@ -186,6 +211,7 @@ object Tracker {
         val zone = ZoneId.systemDefault()
         val untilDay = Instant.ofEpochMilli(until).atZone(zone).toLocalDate()
         val stats = try {
+            lastQueryAt = SystemClock.elapsedRealtime()
             nsm.queryDetails(ConnectivityManager.TYPE_WIFI, null, 0L, until)
         } catch (e: Exception) {
             return

@@ -128,7 +128,9 @@ private fun MainScreen(perms: PermState, onFixPermissions: () -> Unit) {
     // While the app is open, take a fresh snapshot every 30 s so numbers stay live.
     LaunchedEffect(Unit) {
         while (true) {
-            withContext(Dispatchers.IO) { Tracker.refresh(ctx) }
+            delay(Tracker.msUntilFreshPoll())
+            // skip if the Live tab just polled; asking again now would only get stale numbers
+            if (Tracker.msUntilFreshPoll() == 0L) withContext(Dispatchers.IO) { Tracker.refresh(ctx) }
             tick++
             delay(30_000)
         }
