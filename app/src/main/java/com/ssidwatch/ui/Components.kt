@@ -1,5 +1,19 @@
 package com.ssidwatch.ui
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -107,7 +121,37 @@ fun TotalsCard(label: String, t: Traffic) {
     }
 }
 
-/** Stacked download (bottom) / upload (top) bar chart. */
+/** Rounded-top bar shape (flat at the bottom). */
+private fun topRoundedPath(left: Float, top: Float, right: Float, bottom: Float, r: Float): Path {
+    val rr = r.coerceAtMost((right - left) / 2f).coerceAtMost((bottom - top).coerceAtLeast(0f))
+    return Path().apply {
+        addRoundRect(
+            RoundRect(
+                left, top, right, bottom,
+                topLeftCornerRadius = CornerRadius(rr),
+                topRightCornerRadius = CornerRadius(rr),
+                bottomRightCornerRadius = CornerRadius.Zero,
+                bottomLeftCornerRadius = CornerRadius.Zero,
+            )
+        )
+    }
+}
+
+/** Faint diagonal stripes across the current clip, for a bit of texture. */
+private fun DrawScope.stripes(left: Float, top: Float, right: Float, bottom: Float, spacing: Float, color: Color, width: Float) {
+    val h = bottom - top
+    var d = -h
+    while (d < right - left) {
+        drawLine(color, Offset(left + d, bottom), Offset(left + d + h, top), strokeWidth = width)
+        d += spacing
+    }
+}
+
+/**
+ * Stacked download (bottom) / upload (top) bar chart with rounded, gradient-filled,
+ * lightly textured bars over faint track bars. Bars grow in when first shown and glide
+ * to new values when the data changes.
+ */
 @Composable
 fun StackedBars(
     values: List<Traffic>,
@@ -118,7 +162,20 @@ fun StackedBars(
     val rxC = MaterialTheme.colorScheme.primary
     val txC = MaterialTheme.colorScheme.secondary
     val grid = MaterialTheme.colorScheme.outlineVariant
+    val track = MaterialTheme.colorScheme.surfaceVariant
+    val gap = MaterialTheme.colorScheme.background
     val max = (values.maxOfOrNull { it.total } ?: 0L).coerceAtLeast(1L).toFloat()
+
+    // fractions of the chart height, animated towards the latest data
+    val rxF = values.mapIndexed { i, t ->
+        animateFloatAsState(t.rx / max, tween(durationMillis = 600, easing = FastOutSlowInEasing), label = "rx$i").value
+    }
+    val txF = values.mapIndexed { i, t ->
+        animateFloatAsState(t.tx / max, tween(durationMillis = 600, easing = FastOutSlowInEasing), label = "tx$i").value
+    }
+    val appear = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { appear.animateTo(1f, tween(durationMillis = 900, easing = FastOutSlowInEasing)) }
+
     val currentTap by rememberUpdatedState(onTap)
     val count = values.size
     val tapMod = if (onTap != null && count > 0) {
@@ -129,24 +186,79 @@ fun StackedBars(
             }
         }
     } else Modifier
+
     Canvas(modifier.then(tapMod)) {
         val n = values.size
         if (n == 0) return@Canvas
+        val dash = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 4.dp.toPx()))
         for (k in 1..3) {
             val y = size.height * k / 4f
-            drawLine(grid, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
+            drawLine(grid.copy(alpha = 0.6f), Offset(0f, y), Offset(size.width, y), strokeWidth = 1f, pathEffect = dash)
         }
-        drawLine(grid, Offset(0f, size.height), Offset(size.width, size.height), strokeWidth = 2f)
+
         val slot = size.width / n
-        val barW = (slot * 0.68f).coerceAtLeast(1f)
-        values.forEachIndexed { i, t ->
+        val barW = (slot * 0.62f).coerceAtLeast(1.5f)
+        val radius = (barW / 2f).coerceAtMost(6.dp.toPx())
+        val stripeGap = 6.dp.toPx()
+        val stripeW = 1.2.dp.toPx()
+        val sep = 1.5.dp.toPx()
+        val bottom = size.height
+        val a0 = appear.value
+
+        for (i in 0 until n) {
             val x = i * slot + (slot - barW) / 2f
-            val hRx = size.height * (t.rx.toFloat() / max)
-            val hTx = size.height * (t.tx.toFloat() / max)
-            val a = if (highlight >= 0 && highlight != i) 0.4f else 1f
-            if (hRx > 0f) drawRect(rxC.copy(alpha = a), Offset(x, size.height - hRx), Size(barW, hRx))
-            if (hTx > 0f) drawRect(txC.copy(alpha = a), Offset(x, size.height - hRx - hTx), Size(barW, hTx))
+            val dim = highlight >= 0 && highlight != i
+            // ghost track
+            drawPath(topRoundedPath(x, 0f, x + barW, bottom, radius), track.copy(alpha = if (dim) 0.18f else 0.35f))
+
+            // staggered grow-in on first show
+            val p = ((a0 * 1.5f) - (i.toFloat() / n) * 0.5f).coerceIn(0f, 1f)
+            val hRx = bottom * rxF.getOrElse(i) { 0f } * p
+            val hTx = bottom * txF.getOrElse(i) { 0f } * p
+            val hTot = hRx + hTx
+            if (hTot < 0.5f) continue
+            val top = bottom - hTot
+            val alpha = if (dim) 0.45f else 1f
+
+            clipPath(topRoundedPath(x, top, x + barW, bottom, radius)) {
+                if (hRx > 0f) {
+                    drawRect(
+                        Brush.verticalGradient(
+                            listOf(lerp(rxC, Color.White, 0.22f).copy(alpha = alpha), rxC.copy(alpha = alpha * 0.85f)),
+                            startY = bottom - hRx, endY = bottom
+                        ),
+                        topLeft = Offset(x, bottom - hRx),
+                        size = Size(barW, hRx)
+                    )
+                }
+                if (hTx > 0f) {
+                    drawRect(
+                        Brush.verticalGradient(
+                            listOf(lerp(txC, Color.White, 0.22f).copy(alpha = alpha), txC.copy(alpha = alpha * 0.85f)),
+                            startY = top, endY = top + hTx
+                        ),
+                        topLeft = Offset(x, top),
+                        size = Size(barW, hTx)
+                    )
+                    if (hRx > sep * 2) {
+                        drawLine(gap.copy(alpha = 0.7f), Offset(x, bottom - hRx), Offset(x + barW, bottom - hRx), strokeWidth = sep)
+                    }
+                }
+                if (barW >= 6.dp.toPx()) {
+                    stripes(x, top, x + barW, bottom, stripeGap, Color.White.copy(alpha = 0.07f * alpha), stripeW)
+                }
+                // glossy edge along the top
+                drawRect(
+                    Brush.verticalGradient(
+                        listOf(Color.White.copy(alpha = 0.28f * alpha), Color.Transparent),
+                        startY = top, endY = top + (hTot * 0.35f).coerceAtMost(14.dp.toPx())
+                    ),
+                    topLeft = Offset(x, top),
+                    size = Size(barW, hTot)
+                )
+            }
         }
+        drawLine(grid, Offset(0f, bottom - 0.5f), Offset(size.width, bottom - 0.5f), strokeWidth = 1.5f)
     }
 }
 
@@ -177,20 +289,34 @@ fun NetworkChips(networks: List<String>, selected: String?, onSelect: (String?) 
     }
 }
 
+/** Pill-shaped usage bar with gradient, light texture and a grow animation. */
 @Composable
 fun ProportionBar(fraction: Float, color: Color, modifier: Modifier = Modifier) {
-    Box(
-        modifier
-            .height(4.dp)
-            .clip(RoundedCornerShape(2.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Box(
-            Modifier
-                .fillMaxWidth(fraction.coerceIn(0f, 1f))
-                .height(4.dp)
-                .background(color)
-        )
+    val target = fraction.coerceIn(0f, 1f)
+    val anim by animateFloatAsState(target, tween(durationMillis = 700, easing = FastOutSlowInEasing), label = "bar")
+    val appear = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { appear.animateTo(1f, tween(durationMillis = 800, easing = FastOutSlowInEasing)) }
+    val track = MaterialTheme.colorScheme.surfaceVariant
+
+    Canvas(modifier.height(7.dp)) {
+        val h = size.height
+        val r = h / 2f
+        drawRoundRect(track, cornerRadius = CornerRadius(r))
+        val w = size.width * anim * appear.value
+        if (w <= 0.5f) return@Canvas
+        val wd = w.coerceAtLeast(h)
+        val pill = Path().apply { addRoundRect(RoundRect(0f, 0f, wd, h, CornerRadius(r))) }
+        clipPath(pill) {
+            drawRect(
+                Brush.horizontalGradient(listOf(color.copy(alpha = 0.55f), color), startX = 0f, endX = wd),
+                size = Size(wd, h)
+            )
+            stripes(0f, 0f, wd, h, 6.dp.toPx(), Color.White.copy(alpha = 0.12f), 1.5.dp.toPx())
+            drawRect(
+                Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.30f), Color.Transparent), startY = 0f, endY = h * 0.6f),
+                size = Size(wd, h)
+            )
+        }
     }
 }
 
