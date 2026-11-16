@@ -128,6 +128,12 @@ class UsageDb private constructor(ctx: Context) :
         }
     }
 
+    fun deleteNetworkBefore(ssid: String, beforeDay: String) {
+        val db = writableDatabase
+        db.delete("usage", "ssid=? AND day<?", arrayOf(ssid, beforeDay))
+        db.delete("hourly", "ssid=? AND day<?", arrayOf(ssid, beforeDay))
+    }
+
     fun clearAll() {
         val db = writableDatabase
         db.delete("usage", null, null)

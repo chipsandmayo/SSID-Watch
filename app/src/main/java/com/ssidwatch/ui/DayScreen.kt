@@ -35,6 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.ssidwatch.data.Tracker
 import com.ssidwatch.data.Traffic
 import com.ssidwatch.data.UsageDb
 import kotlinx.coroutines.Dispatchers
@@ -91,7 +92,7 @@ fun DayScreen(
         data.networks.firstOrNull { it.first == network }?.second ?: Traffic.ZERO
     }
     // Keep the selected network visible as a chip even on days it wasn't used.
-    val chipNames = data.networks.map { it.first }.let { names ->
+    val chipNames = data.networks.map { it.first }.filter { it != Tracker.BEFORE }.let { names ->
         if (network != null && network !in names) names + network else names
     }
 
@@ -136,13 +137,14 @@ fun DayScreen(
             val maxN = (data.networks.maxOfOrNull { it.second.total } ?: 1L).coerceAtLeast(1L)
             items(data.networks, key = { "n_" + it.first }) { (name, t) ->
                 UsageRow(
-                    title = name,
+                    title = displayNetwork(name),
                     t = t,
                     fraction = t.total.toFloat() / maxN,
                     italic = isSpecialNetwork(name),
-                    onClick = { onNetwork(name) }
+                    onClick = if (name == Tracker.BEFORE) null else ({ onNetwork(name) })
                 )
             }
+            if (data.networks.any { it.first == Tracker.BEFORE }) item { EmptyNote(NOT_RECORDED_NOTE) }
         }
         item { SectionTitle(if (network == null) "Apps (tap to see networks)" else "Apps on $network") }
         if (data.apps.isEmpty()) item { EmptyNote("No app usage recorded.") }

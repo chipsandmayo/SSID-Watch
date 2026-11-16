@@ -1,6 +1,5 @@
 package com.ssidwatch
 
-import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -71,15 +70,11 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private const val PREFS = "settings"
-private const val K_ONBOARDED = "onboarded"
-
 @Composable
 private fun Root() {
     val ctx = LocalContext.current
-    val prefs = remember { ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
     var perms by remember { mutableStateOf(Perms.state(ctx)) }
-    var onboarded by remember { mutableStateOf(prefs.getBoolean(K_ONBOARDED, false)) }
+    var showSetup by remember { mutableStateOf(false) }
 
     val owner = LocalLifecycleOwner.current
     DisposableEffect(owner) {
@@ -90,25 +85,19 @@ private fun Root() {
         onDispose { owner.lifecycle.removeObserver(obs) }
     }
 
-    if (!onboarded || !perms.ready) {
+    // Tracking is always on: the moment the required permissions exist, the tracker runs.
+    LaunchedEffect(perms.ready) {
+        if (perms.ready) MonitorService.start(ctx)
+    }
+
+    if (!perms.ready || showSetup) {
         Onboarding(
             state = perms,
             onRefresh = { perms = Perms.state(ctx) },
-            onContinue = {
-                prefs.edit().putBoolean(K_ONBOARDED, true).apply()
-                onboarded = true
-                MonitorService.start(ctx)
-            }
+            onDone = { showSetup = false }
         )
     } else {
-        LaunchedEffect(Unit) { MonitorService.start(ctx) }
-        MainScreen(
-            perms = perms,
-            onFixPermissions = {
-                prefs.edit().putBoolean(K_ONBOARDED, false).apply()
-                onboarded = false
-            }
-        )
+        MainScreen(perms = perms, onFixPermissions = { showSetup = true })
     }
 }
 

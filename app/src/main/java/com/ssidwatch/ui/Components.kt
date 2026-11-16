@@ -291,7 +291,7 @@ fun AppRow(
                 split.forEach { (net, nt) ->
                     Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            net,
+                            displayNetwork(net),
                             modifier = Modifier.weight(1f),
                             style = MaterialTheme.typography.bodyMedium,
                             fontStyle = if (isSpecialNetwork(net)) FontStyle.Italic else FontStyle.Normal,
@@ -311,3 +311,10 @@ fun AppRow(
 }
 
 fun isSpecialNetwork(name: String) = name == Tracker.BEFORE || name == Tracker.UNKNOWN
+
+/** Past usage imported from Android has no Wi-Fi name; show it as such rather than as a network. */
+fun displayNetwork(name: String) = if (name == Tracker.BEFORE) "Network not recorded" else name
+
+const val NOT_RECORDED_NOTE =
+    "Android keeps each app's past Wi-Fi usage but not the Wi-Fi name, so network names are only " +
+        "known from when SSID Watch was installed."

@@ -52,7 +52,7 @@ private fun Context.openSafely(vararg intents: Intent) {
 
 @SuppressLint("BatteryLife")
 @Composable
-fun Onboarding(state: PermState, onRefresh: () -> Unit, onContinue: () -> Unit) {
+fun Onboarding(state: PermState, onRefresh: () -> Unit, onDone: () -> Unit) {
     val ctx = LocalContext.current
     val locLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { onRefresh() }
     val oneLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { onRefresh() }
@@ -69,7 +69,7 @@ fun Onboarding(state: PermState, onRefresh: () -> Unit, onContinue: () -> Unit) 
         Text("SSID Watch", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(6.dp))
         Text(
-            "Tracks Wi-Fi data per network and per app. Everything stays on your phone. " +
+            "Tracks Wi-Fi data per network and per app, all the time. Everything stays on your phone. " +
                 "Android needs a few permissions first:",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -110,8 +110,14 @@ fun Onboarding(state: PermState, onRefresh: () -> Unit, onContinue: () -> Unit) 
         }
 
         Spacer(Modifier.height(20.dp))
-        Button(onClick = onContinue, enabled = state.ready, modifier = Modifier.fillMaxWidth().height(52.dp)) {
-            Text(if (state.ready) "Start tracking" else "Grant steps 1 and 2 to continue")
+        if (state.ready) {
+            Button(onClick = onDone, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("Done") }
+        } else {
+            Text(
+                "Tracking starts automatically as soon as steps 1 and 2 are allowed.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
         Spacer(Modifier.height(8.dp))
         OutlinedButton(onClick = onRefresh, modifier = Modifier.fillMaxWidth()) { Text("Re-check permissions") }

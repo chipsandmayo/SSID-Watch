@@ -36,7 +36,7 @@ Android records how much Wi-Fi data each app used, but not which Wi-Fi network i
 
 The growth between two snapshots goes to the network that was connected in between. Counters are read cumulatively from a fixed anchor on Android's bucket boundaries, so usage isn't spread across networks by Android's 2-hour buckets.
 
-**History before install:** on first launch the app imports Android's last ~30 days of per-app Wi-Fi usage and labels it *Before tracking*, because Android doesn't know which network that data was used on. Per-network tracking starts from installation.
+**History before install:** like GlassWire, the app imports Android's own per-app Wi-Fi history (as far back as the phone keeps it, usually about 3 months), so any past day shows totals, an hourly chart and per-app usage. Android never recorded the Wi-Fi name for that data, so it appears as *Network not recorded*. Network names are known from installation onwards. Tracking runs all the time once permissions are granted.
 
 ## Building it yourself
 

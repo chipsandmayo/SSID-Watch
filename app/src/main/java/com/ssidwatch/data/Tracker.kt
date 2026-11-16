@@ -4,6 +4,7 @@ import android.app.usage.NetworkStats
 import android.app.usage.NetworkStatsManager
 import android.content.Context
 import android.net.ConnectivityManager
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
@@ -33,6 +34,9 @@ object Tracker {
     private const val K_SSID = "ssid"           // SSID connected right now (null = not on Wi-Fi)
     private const val K_PREV_SSID = "prevSsid"  // last non-null SSID
     private const val K_LAST = "lastSample"
+    private const val K_TRACK_START = "trackStart" // when per-SSID tracking began
+    private const val K_BACKFILL_V = "backfillV"
+    private const val BACKFILL_VERSION = "2"
 
     fun currentSsid(ctx: Context): String? = UsageDb.get(ctx).getMeta(K_SSID)
 
@@ -78,7 +82,9 @@ object Tracker {
             if (firstRun) {
                 // Give the user some history straight away: Android's last 30 days of
                 // Wi-Fi usage per app, filed under "Before tracking" (network unknown).
-                backfill(db, nsm, anchor)
+                backfill(db, nsm, anchor, includeUntilDay = true)
+                db.setMeta(K_TRACK_START, anchor.toString())
+                db.setMeta(K_BACKFILL_V, BACKFILL_VERSION)
                 var sum = Traffic.ZERO
                 for ((uid, t) in current) if (t.total > 0) {
                     db.addUsage(day, BEFORE, uid, t.rx, t.tx)
@@ -86,6 +92,16 @@ object Tracker {
                 }
                 if (sum.total > 0) db.addHourly(day, hour, BEFORE, sum.rx, sum.tx)
             } else {
+                if (db.getMeta(K_BACKFILL_V) != BACKFILL_VERSION) {
+                    // Upgrade from v1 (30-day daily import): replace it with the full
+                    // hourly history Android keeps.
+                    val start = db.getMeta(K_TRACK_START)?.toLongOrNull() ?: anchor
+                    val startDay = Instant.ofEpochMilli(start).atZone(zone).toLocalDate().toString()
+                    db.deleteNetworkBefore(BEFORE, startDay)
+                    backfill(db, nsm, start, includeUntilDay = false)
+                    db.setMeta(K_TRACK_START, start.toString())
+                    db.setMeta(K_BACKFILL_V, BACKFILL_VERSION)
+                }
                 val base = db.baselines()
                 val ssid = db.getMeta(K_SSID) ?: db.getMeta(K_PREV_SSID) ?: UNKNOWN
                 var sum = Traffic.ZERO
@@ -151,16 +167,46 @@ object Tracker {
         }
     }
 
-    private fun backfill(db: UsageDb, nsm: NetworkStatsManager, until: Long) {
+    /**
+     * Import Android's own per-app Wi-Fi history (as far back as the phone keeps it,
+     * typically ~3 months, in 2-hour buckets) for everything before [until].
+     * Android never recorded which network it was, so it's filed under [BEFORE].
+     */
+    @Suppress("DEPRECATION")
+    private fun backfill(db: UsageDb, nsm: NetworkStatsManager, until: Long, includeUntilDay: Boolean) {
         val zone = ZoneId.systemDefault()
-        val today = LocalDate.now(zone)
-        for (i in BACKFILL_DAYS downTo 0) {
-            val d = today.minusDays(i.toLong())
-            val s = d.atStartOfDay(zone).toInstant().toEpochMilli()
-            val e = minOf(d.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli(), until)
-            if (e <= s) continue
-            val m = query(nsm, s, e) ?: continue
-            for ((uid, t) in m) if (t.total > 0) db.addUsage(d.toString(), BEFORE, uid, t.rx, t.tx)
+        val untilDay = Instant.ofEpochMilli(until).atZone(zone).toLocalDate()
+        val stats = try {
+            nsm.queryDetails(ConnectivityManager.TYPE_WIFI, null, 0L, until)
+        } catch (e: Exception) {
+            return
         }
+        val perApp = HashMap<Pair<String, Int>, LongArray>()
+        val perHour = HashMap<Pair<String, Int>, LongArray>()
+        val b = NetworkStats.Bucket()
+        try {
+            while (stats.hasNextBucket()) {
+                stats.getNextBucket(b)
+                if (b.tag != NetworkStats.Bucket.TAG_NONE) continue
+                if (b.startTimeStamp >= until) continue
+                if (b.rxBytes + b.txBytes <= 0) continue
+                val z = Instant.ofEpochMilli(b.startTimeStamp).atZone(zone)
+                val d = z.toLocalDate()
+                if (d.isAfter(untilDay) || (!includeUntilDay && d == untilDay)) continue
+                val ds = d.toString()
+                val a = perApp.getOrPut(ds to b.uid) { LongArray(2) }
+                a[0] += b.rxBytes
+                a[1] += b.txBytes
+                val h = perHour.getOrPut(ds to z.hour) { LongArray(2) }
+                h[0] += b.rxBytes
+                h[1] += b.txBytes
+            }
+        } catch (e: Exception) {
+            // keep whatever was read
+        } finally {
+            stats.close()
+        }
+        for ((k, v) in perApp) db.addUsage(k.first, BEFORE, k.second, v[0], v[1])
+        for ((k, v) in perHour) db.addHourly(k.first, k.second, BEFORE, v[0], v[1])
     }
 }
