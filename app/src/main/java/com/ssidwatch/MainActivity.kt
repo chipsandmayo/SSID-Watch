@@ -147,7 +147,7 @@ private fun MainScreen(perms: PermState, onFixPermissions: () -> Unit) {
                         }
                     }) { Icon(Icons.Filled.Refresh, contentDescription = "Refresh") }
                     IconButton(onClick = onFixPermissions) {
-                        Icon(Icons.Filled.Settings, contentDescription = "Permissions")
+                        Icon(Icons.Filled.Settings, contentDescription = "Settings")
                     }
                 }
             )

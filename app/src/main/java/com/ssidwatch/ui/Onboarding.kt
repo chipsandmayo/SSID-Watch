@@ -66,7 +66,11 @@ fun Onboarding(state: PermState, onRefresh: () -> Unit, onDone: () -> Unit) {
             .verticalScroll(rememberScrollState())
             .padding(20.dp)
     ) {
-        Text("SSID Watch", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Text(
+            if (state.ready) "Settings" else "SSID Watch",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold
+        )
         Spacer(Modifier.height(6.dp))
         Text(
             "Tracks Wi-Fi data per network and per app, all the time. Everything stays on your phone. " +
@@ -111,6 +115,8 @@ fun Onboarding(state: PermState, onRefresh: () -> Unit, onDone: () -> Unit) {
 
         Spacer(Modifier.height(20.dp))
         if (state.ready) {
+            UpdateSection()
+            Spacer(Modifier.height(16.dp))
             Button(onClick = onDone, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("Done") }
         } else {
             Text(
