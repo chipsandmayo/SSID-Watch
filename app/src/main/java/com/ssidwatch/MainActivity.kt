@@ -24,6 +24,8 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -45,6 +47,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.ssidwatch.data.Tracker
 import com.ssidwatch.ui.AppTheme
+import com.ssidwatch.ui.ConnectionScreen
 import com.ssidwatch.ui.DayScreen
 import com.ssidwatch.ui.HistoryScreen
 import com.ssidwatch.ui.Onboarding
@@ -114,6 +117,7 @@ private fun Root() {
 private fun MainScreen(perms: PermState, onFixPermissions: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
+    var topTab by rememberSaveable { mutableIntStateOf(0) }
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var dayStr by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }
     var network by rememberSaveable { mutableStateOf<String?>(null) }
@@ -134,6 +138,7 @@ private fun MainScreen(perms: PermState, onFixPermissions: () -> Unit) {
 
     Scaffold(
         topBar = {
+            Column {
             TopAppBar(
                 title = {
                     Column {
@@ -157,9 +162,14 @@ private fun MainScreen(perms: PermState, onFixPermissions: () -> Unit) {
                     }
                 }
             )
+            TabRow(selectedTabIndex = topTab) {
+                Tab(selected = topTab == 0, onClick = { topTab = 0 }, text = { Text("Usage") })
+                Tab(selected = topTab == 1, onClick = { topTab = 1 }, text = { Text("Connection") })
+            }
+            }
         },
         bottomBar = {
-            NavigationBar {
+            if (topTab == 0) NavigationBar {
                 NavigationBarItem(
                     selected = tab == 0,
                     onClick = { tab = 0 },
@@ -190,7 +200,9 @@ private fun MainScreen(perms: PermState, onFixPermissions: () -> Unit) {
                 )
             }
             val listPadding = PaddingValues(bottom = inner.calculateBottomPadding())
-            when (tab) {
+            if (topTab == 1) {
+                ConnectionScreen(padding = listPadding)
+            } else when (tab) {
                 0 -> DayScreen(
                     day = day,
                     onDay = { if (!it.isAfter(LocalDate.now())) dayStr = it.toString() },
