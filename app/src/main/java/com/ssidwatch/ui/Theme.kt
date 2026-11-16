@@ -1,6 +1,10 @@
 package com.ssidwatch.ui
 
+import android.content.Context
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -31,10 +35,34 @@ private val LightColors = lightColorScheme(
     outlineVariant = Color(0xFFD5DAE1),
 )
 
+/** Appearance setting: "dark" (default), "light" or "system". */
+object ThemePrefs {
+    private const val PREFS = "settings"
+    private const val KEY = "theme"
+    var mode by mutableStateOf("dark")
+        private set
+
+    fun load(ctx: Context) {
+        mode = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, "dark") ?: "dark"
+    }
+
+    fun set(ctx: Context, m: String) {
+        mode = m
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, m).apply()
+    }
+}
+
+@Composable
+fun isAppDark(): Boolean = when (ThemePrefs.mode) {
+    "light" -> false
+    "system" -> isSystemInDarkTheme()
+    else -> true
+}
+
 @Composable
 fun AppTheme(content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = if (isSystemInDarkTheme()) DarkColors else LightColors,
+        colorScheme = if (isAppDark()) DarkColors else LightColors,
         content = content
     )
 }

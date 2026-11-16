@@ -27,6 +27,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -115,6 +116,7 @@ fun Onboarding(state: PermState, onRefresh: () -> Unit, onDone: () -> Unit) {
 
         Spacer(Modifier.height(20.dp))
         if (state.ready) {
+            AppearanceSection()
             UpdateSection()
             Spacer(Modifier.height(16.dp))
             Button(onClick = onDone, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("Done") }
@@ -158,6 +160,30 @@ private fun Step(num: Int, title: String, body: String, done: Boolean, enabled: 
             if (!done) {
                 Spacer(Modifier.width(8.dp))
                 Button(onClick = action, enabled = enabled) { Text("Allow") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AppearanceSection() {
+    val ctx = LocalContext.current
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text("Appearance", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(8.dp))
+            Row {
+                listOf("dark" to "Dark", "light" to "Light", "system" to "Follow phone").forEach { (key, label) ->
+                    FilterChip(
+                        selected = ThemePrefs.mode == key,
+                        onClick = { ThemePrefs.set(ctx, key) },
+                        label = { Text(label) },
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                }
             }
         }
     }

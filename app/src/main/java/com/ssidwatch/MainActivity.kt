@@ -3,6 +3,7 @@ package com.ssidwatch
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -46,6 +47,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.ssidwatch.data.Tracker
 import com.ssidwatch.ui.AppTheme
+import com.ssidwatch.ui.ThemePrefs
+import com.ssidwatch.ui.isAppDark
 import com.ssidwatch.ui.ConnectionScreen
 import com.ssidwatch.ui.LiveScreen
 import com.ssidwatch.ui.DayScreen
@@ -60,8 +63,16 @@ import java.time.LocalDate
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ThemePrefs.load(this)
         enableEdgeToEdge()
         setContent {
+            val dark = isAppDark()
+            LaunchedEffect(dark) {
+                // status/navigation bar icons: light icons on dark theme, dark icons on light
+                val style = if (dark) SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                else SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
+                enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
+            }
             AppTheme {
                 Surface(color = MaterialTheme.colorScheme.background) {
                     Root()
