@@ -58,8 +58,11 @@ private const val PRIVACY_TEXT =
         "approximate location. It sees your public IP address.\n" +
         "• api.macvendors.com: to show your router's manufacturer. It receives only the first " +
         "half of the router's hardware address (the manufacturer prefix).\n" +
-        "• github.com: to check for and download updates.\n\n" +
-        "You can turn the first two off below."
+        "• github.com: to check for and download updates.\n" +
+        "• Google AdMob: shows the small ad banner at the bottom of the screen. Google may use " +
+        "your device's advertising ID and IP address to choose and measure ads, depending on " +
+        "the choices you made in the ad consent screen.\n\n" +
+        "You can turn the ipinfo.io and macvendors lookups off below."
 
 private data class Library(val name: String, val owner: String)
 
@@ -69,6 +72,10 @@ private val LIBRARIES = listOf(
     Library("Kotlin Standard Library", "JetBrains s.r.o. and Kotlin Programming Language contributors"),
     Library("kotlinx.coroutines", "JetBrains s.r.o. and Kotlin Programming Language contributors"),
 )
+
+private const val GOOGLE_ADS_NOTE =
+    "Ads are provided by the Google Mobile Ads SDK and the Google User Messaging Platform SDK, " +
+        "used under the Google APIs Terms of Service and the Google Mobile Ads SDK Terms."
 
 @Composable
 fun PrivacySection() {
@@ -99,6 +106,7 @@ fun PrivacySection() {
                 Spacer(Modifier.width(8.dp))
                 Switch(checked = Lookups.enabled, onCheckedChange = { Lookups.set(ctx, it) })
             }
+            AdPrivacyButton()
         }
     }
 }
@@ -142,6 +150,12 @@ fun LicencesSection() {
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    GOOGLE_ADS_NOTE,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 Spacer(Modifier.height(6.dp))
                 TextButton(onClick = {
                     runCatching {

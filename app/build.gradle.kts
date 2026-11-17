@@ -6,6 +6,12 @@ plugins {
 
 val buildNumber = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
 
+// AdMob IDs: real ones come from GitHub secrets; otherwise Google's official test IDs.
+val admobAppId = System.getenv("ADMOB_APP_ID")?.takeIf { it.isNotBlank() }
+    ?: "ca-app-pub-3940256099942544~3347511713"
+val admobBannerId = System.getenv("ADMOB_BANNER_ID")?.takeIf { it.isNotBlank() }
+    ?: "ca-app-pub-3940256099942544/9214589741"
+
 android {
     namespace = "com.ssidwatch"
     compileSdk = 35
@@ -16,6 +22,8 @@ android {
         targetSdk = 35
         versionCode = buildNumber
         versionName = "1.0.$buildNumber"
+        manifestPlaceholders["admobAppId"] = admobAppId
+        buildConfigField("String", "ADMOB_BANNER_ID", "\"$admobBannerId\"")
     }
 
     // Old, public signing key. Only used for local builds, as the fallback in CI, and as
@@ -54,6 +62,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     lint {
         abortOnError = false
@@ -72,4 +81,6 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-core")
+    implementation("com.google.android.gms:play-services-ads:23.6.0")
+    implementation("com.google.android.ump:user-messaging-platform:3.1.0")
 }

@@ -47,4 +47,6 @@ Release builds are signed in CI with a private key held in GitHub secrets (`SIGN
 
 ## Privacy
 
-All usage history, Wi-Fi names, live-graph recordings and captured packets stay on the phone. The app only contacts ipinfo.io (provider and approximate location on the Connection tab), api.macvendors.com (router maker, from the first half of its hardware address) and GitHub (updates). The first two can be switched off in Settings. Location permission is used only because Android requires it to read the Wi-Fi name.
+All usage history, Wi-Fi names, live-graph recordings and captured packets stay on the phone. The app only contacts ipinfo.io (provider and approximate location on the Connection tab), api.macvendors.com (router maker, from the first half of its hardware address), GitHub (updates) and Google AdMob (the ad banner, after the consent screen where required). The ipinfo.io and macvendors lookups can be switched off in Settings.
+
+**Ads:** builds use Google's test ads unless the repository secrets `ADMOB_APP_ID` and `ADMOB_BANNER_ID` are set. Location permission is used only because Android requires it to read the Wi-Fi name.

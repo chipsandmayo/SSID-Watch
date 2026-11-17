@@ -9,6 +9,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -46,6 +48,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.ssidwatch.data.Tracker
+import com.ssidwatch.ui.AdBanner
+import com.ssidwatch.ui.Ads
 import com.ssidwatch.ui.AppTheme
 import com.ssidwatch.ui.Lookups
 import com.ssidwatch.ui.ThemePrefs
@@ -67,6 +71,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         ThemePrefs.load(this)
         Lookups.load(this)
+        Ads.setup(this)
         enableEdgeToEdge()
         setContent {
             val dark = isAppDark()
@@ -177,7 +182,9 @@ private fun MainScreen(perms: PermState, onFixPermissions: () -> Unit) {
             }
         },
         bottomBar = {
-            if (topTab == 0) NavigationBar {
+            // banner sits at the very bottom, under the Day/History bar when that's shown
+            Column(Modifier.navigationBarsPadding()) {
+            if (topTab == 0) NavigationBar(windowInsets = WindowInsets(0, 0, 0, 0)) {
                 NavigationBarItem(
                     selected = tab == 0,
                     onClick = { tab = 0 },
@@ -190,6 +197,8 @@ private fun MainScreen(perms: PermState, onFixPermissions: () -> Unit) {
                     icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
                     label = { Text("History") }
                 )
+            }
+            AdBanner()
             }
         }
     ) { inner ->
