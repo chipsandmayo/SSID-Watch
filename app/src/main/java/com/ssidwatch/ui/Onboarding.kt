@@ -118,6 +118,7 @@ fun Onboarding(state: PermState, onRefresh: () -> Unit, onDone: () -> Unit) {
         if (state.ready) {
             AppearanceSection()
             UpdateSection()
+            TerminalSection()
             PrivacySection()
             LicencesSection()
             Spacer(Modifier.height(16.dp))
